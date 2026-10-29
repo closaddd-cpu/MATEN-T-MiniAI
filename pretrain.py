@@ -142,6 +142,36 @@ def tensor_batch(pairs,length,pad):
     return x,y
 
 
+def evaluate_validation(model, paths, tokenizer, device, precision, sequence_length,
+                        batch_size=1, max_batches=10, max_record_tokens=65536):
+    """Token-weighted loss on held-out rows; not an independent benchmark."""
+    if batch_size < 1 or max_batches < 1:
+        raise ValueError('Validation settings must be positive')
+    model.eval()
+    total_loss, token_count = 0.0, 0
+    try:
+        documents = iter_documents(paths, split='validation')
+        batches = token_batches(documents, tokenizer, sequence_length,
+                                batch_size, max_record_tokens=max_record_tokens)
+        with torch.inference_mode():
+            for index, (x, y) in enumerate(batches):
+                if index >= max_batches:
+                    break
+                active = int((y != -100).sum().item())
+                if not active:
+                    continue
+                x, y = x.to(device), y.to(device)
+                with autocast(device, precision):
+                    _, loss = model(x, y)
+                if not bool(torch.isfinite(loss)):
+                    raise FloatingPointError('Non-finite validation loss')
+                total_loss += float(loss.item()) * active
+                token_count += active
+    finally:
+        model.train()
+    return (total_loss / token_count if token_count else float('nan')), token_count
+
+
 def validate_model_size():
     with torch.device('meta'):
         model=MiniAI(ModelConfig())
@@ -155,7 +185,7 @@ def get_config(args):
 
 
 def train(args):
-    if min(args.epochs,args.batch_size,args.grad_accum,args.save_every,args.log_every)<1:raise ValueError('epochs/batch/accum/save/log must be positive')
+    if min(args.epochs,args.batch_size,args.grad_accum,args.save_every,args.log_every,args.eval_batches,args.eval_batch_size)<1:raise ValueError('epochs/batch/accum/save/log must be positive')
     if args.sequence_length<8 or args.lr<=0 or args.warmup_steps<0 or args.lr_decay_steps<=args.warmup_steps:
         raise ValueError('Invalid context length or optimizer schedule')
     if not 0 <= args.min_lr_ratio <= 1:raise ValueError('min-lr-ratio must be in 0..1')
@@ -249,6 +279,14 @@ def train(args):
                     save(epoch,cursor)
                     return output/'last.pt'
         if acc:update(acc)
+        validation_loss, validation_tokens = evaluate_validation(
+            model, paths, tok, device, precision, args.sequence_length,
+            batch_size=args.eval_batch_size, max_batches=args.eval_batches,
+            max_record_tokens=args.max_record_tokens)
+        if math.isfinite(validation_loss):
+            best_loss = min(best_loss, validation_loss)
+        print(f'BY MATEN/T | epoch={epoch+1} validation_loss={validation_loss:.6f} '
+              f'validation_tokens={validation_tokens:,} best_validation_loss={best_loss:.6f}',flush=True)
         save(epoch+1,0)
         skip=0
     print(f'BY MATEN/T | pretraining epochs finished, steps={step}, tokens_seen={tokens_seen:,}',flush=True)
@@ -277,6 +315,8 @@ def parser():
     p.add_argument('--grad-clip',type=float,default=1.0)
     p.add_argument('--save-every',type=int,default=500)
     p.add_argument('--log-every',type=int,default=20)
+    p.add_argument('--eval-batches',type=int,default=10,help='Held-out validation batches per epoch')
+    p.add_argument('--eval-batch-size',type=int,default=1)
     p.add_argument('--max-steps',type=int,default=0,help='0 means full epochs; positive values only for debugging')
     p.add_argument('--max-records',type=int,default=0,help='0 means all rows')
     p.add_argument('--max-record-tokens',type=int,default=65536)

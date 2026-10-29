@@ -94,6 +94,14 @@ LOCAL CHAT FROM AN EXPORTED MODEL
 Open http://127.0.0.1:8765 locally. Pretraining-only models may produce
 poor chat responses until appropriate instruction tuning is completed.
 
+VALIDATION AFTER EVERY EPOCH
+----------------------------
+Pretraining evaluates held-out rows after completing each epoch. A
+token-weighted validation loss and the best score are recorded in logs
+and checkpoints. Use --eval-batches 10 and --eval-batch-size 1 to
+configure the evaluation cost. Synthetic template overlap means an
+independent evaluation dataset is still required.
+
 TOKEN COUNTING AND DATA QUALITY
 -------------------------------
 The training logs count actual next-token targets and optimizer updates.

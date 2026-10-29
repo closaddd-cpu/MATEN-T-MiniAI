@@ -9,7 +9,7 @@ import torch
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from model import MiniAI,ModelConfig
-from pretrain import iter_documents,token_batches,parser as pretrain_parser,validate_model_size
+from pretrain import iter_documents,token_batches,parser as pretrain_parser,validate_model_size,evaluate_validation
 from lora import inject_lora,adapter_state,load_adapter
 from export_model import safe_state,restore_weights
 
@@ -82,6 +82,18 @@ class ReleaseTests(unittest.TestCase):
             dst.fc.load_state_dict(src.fc.state_dict());dst.proj.load_state_dict(src.proj.state_dict())
         load_adapter(another,state,rank=4,alpha=8,dropout=0,merge=True)
         self.assertTrue(torch.isfinite(another(t)[0]).all())
+
+    def test_validation_evaluates_holdout_tokens(self):
+        with tempfile.TemporaryDirectory() as temp:
+            f=Path(temp)/'data.txt'
+            f.write_text(''.join(f'Document number {i} about a different topic\\n' for i in range(60)),encoding='utf-8')
+            cfg=ModelConfig(vocab_size=256,context_length=32,n_layer=1,n_head=4,d_model=32,d_ff=64,dropout=0)
+            model=MiniAI(cfg)
+            model.train()
+            loss,count=evaluate_validation(model,[f],FakeTokenizer(),torch.device('cpu'),'fp32',16,max_batches=3)
+            self.assertGreater(count,0)
+            self.assertTrue(__import__('math').isfinite(loss))
+            self.assertTrue(model.training)
 
     def test_tied_weight_safetensor_dictionary(self):
         small=MiniAI(ModelConfig(vocab_size=256,context_length=32,n_layer=1,n_head=4,d_model=32,d_ff=64,dropout=0))

@@ -118,6 +118,8 @@ Open `http://127.0.0.1:8765` on the computer running the server. Chat ability is
 
 ## Training controls and verification
 
+At the end of every completed epoch, the trainer computes held-out **validation loss** and stores the best score in its checkpoint. Synthetic-template validation is not an independent benchmark.
+
 The default `pretrain.py --max-steps` is **0** (no artificial cap). Use `--max-steps` and `--tiny` **only for isolated pipeline tests**. The trainer reports actual target token counts, tracks optimizer steps and stores them in atomic checkpoints. An earlier ~343M-token figure was an estimate, **not** a verified tokenizer census.
 
 The dataset generator also supports selecting a subset of domains and the tokenizer can be trained on custom documents. Exact duplicate filtering uses a bounded configurable window; it is **not** global deduplication or protection against memorization. Hold out genuinely independent documents and audit all training sources.

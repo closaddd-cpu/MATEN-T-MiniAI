@@ -1,145 +1,102 @@
-# MATEN/T MiniAI v1 — 86M · 2K · Multilingual
+# MATEN/T MiniAI v1
 
-**BY MATEN/T — Maten Faesal** · [**M/ License v1.0**](LICENSE.md)
+**BY MATEN/T — Maten Faesal** · [M/ License v1.0](LICENSE.md)
 
-From-scratch educational decoder language model: **86,019,712 parameters**, **2,048-token context**, **16,384-token SentencePiece tokenizer**, PyTorch training, an optional C++17 data utility, a minimal dark/light local chat interface, and **94 UTF-8 JSONL files with 100,000 records each**.
-
-**No `.bat`, API key, subscription, third-party model weights or private dataset is required.** Python 3.10+ is needed. The repo contains **training code and untrained model architecture**, **not trained 86M weights**.
-
-> **Critical distinction:** 9.4 million *synthetic* records ≠ 9.4 million independent, expertly written examples. Many records are mathematically varied versions of a small set of templates. The project is a reproducible research/training starter kit, **not** a capable ready-to-use general-purpose assistant. Neither 50 programming shards nor 20 language shards establish competence in those languages. Diverse licensed material, native-speaker review, security review, independent benchmarks, and substantial GPU training are necessary before claiming real-world quality.
+MiniAI is a small, from-scratch decoder language model and an end-to-end training project. This repository includes the model architecture, streaming dataset generator, tokenizer preparation, training and evaluation utilities, checkpoint support, tests and a local chat interface. It **does not include pretrained model weights**.
 
 ## Architecture
 
-| Component | Value |
-|---|---|
-| Trainable parameters | **86,019,712** (counted from PyTorch model) |
-| Model | 10-layer causal decoder Transformer, 12 heads, width 768, FFN 3136 |
-| Maximum context | **2,048 tokens** |
-| Tokenizer | SentencePiece BPE, **16,384** vocabulary items |
-| Training | AdamW, gradient accumulation, FP16 CUDA autocast + dynamic GradScaler, optional BF16/FP32, LR warmup and cosine decay, CPU FP32 fallback |
-| Inference | Local Python HTTP chat; model must be trained first |
-| Optional C++ | Data row-count utility; model and optimization use PyTorch |
-| Data | 94 files × 100,000 records = **9,400,000** synthetic rows |
+| Component | Configuration |
+| --- | --- |
+| Parameters | **86,045,328** |
+| Maximum context | **6,144 tokens (6K)** |
+| Transformer | 10 layers, 12 attention heads, 768 hidden width |
+| Feed-forward width | 3,240 |
+| Positions | Rotary Position Embeddings (RoPE) |
+| Tokenizer | SentencePiece BPE, 16,384 vocabulary pieces |
+| Optimization | AdamW, FP16 AMP on supported CUDA devices, gradient accumulation, warmup and cosine LR decay |
+| Training data | Up to 9,400,000 procedurally generated JSONL records from 94 domains |
 
-`--sequence-length 256` is a lower-memory training setting; it does **not** change the model's 2,048-token capacity. To train on 2K spans specify `--sequence-length 2048` only if memory allows.
+The current version replaces the earlier 2K learned-position architecture. **Old 2K checkpoints are incompatible with the new 6K/RoPE model.** The maximum context is an architectural capacity, not proof of long-context accuracy.
 
-## Dataset layout
+## Dataset
 
-- **50 programming languages:** `c`, `c++`, `java`, `python`, `javascript`, `typescript`, `csharp`, `go`, `rust`, `kotlin`, `swift`, `php`, `ruby`, `bash`, `powershell`, `sql`, `lua`, `dart`, `r`, `julia`, `scala`, `groovy`, `perl`, `elixir`, `erlang`, `haskell`, `ocaml`, `fsharp`, `clojure`, `common_lisp`, `scheme`, `racket`, `fortran`, `pascal`, `delphi`, `zig`, `nim`, `crystal`, `d`, `objective_c`, `matlab`, `octave`, `visual_basic`, `awk`, `tcl`, `gdscript`, `coffeescript`, `solidity`, `ada`, `prolog`.
-- **20 natural languages:** `kurdish_sorani`, `kurdish_kurmanji`, `english`, `arabic`, `turkish`, `persian`, `french`, `german`, `spanish`, `italian`, `portuguese`, `russian`, `hindi`, `urdu`, `chinese_simplified`, `japanese`, `korean`, `dutch`, `swedish`, `indonesian`.
-- **24 other subjects and dialog:** `conversation_human`, `conversation`, `cybersecurity`, `mathematics`, `physics`, `chemistry`, `biology`, `astronomy`, `ai_foundations`, `computer_science`, `statistics`, `geology`, `geography`, `ecology`, `engineering`, `electronics`, `robotics`, `data_science`, `environmental_science`, `economics`, `health_literacy`, `linguistics`, `logic`, `cryptography`.
+The data generator covers 50 programming languages, 20 natural languages and 24 other subjects, including conversation, programming, mathematics, sciences and defensive security. The language datasets remain multilingual; English-language project documentation does not remove Sorani, Kurmanji or any other data domain.
 
-Each JSONL line is valid JSON and carries: `id`, `domain`, `topic`, `instruction`, `response`, `created_by`, `license`, `provenance`, `review_status`. See `datasets/manifest.json` for SHA-256 checksums and [DATASET_CARD](docs/DATASET_CARD.md) for quality limitations and license scope. 100K per file does not imply 100K distinct topics; conversational datasets also use math-based variants.
+Generated records are primarily **synthetic template variants**. Counting 9.4 million records does not mean 9.4 million unique expertly reviewed conversations. A complete training run alone cannot guarantee useful output.
 
-## Installation (PC, Linux, macOS)
+## Quick setup
+
+Install Python 3.10+ and the appropriate [PyTorch build for your hardware](https://pytorch.org/get-started/locally/), then:
 
 ```sh
 python -m pip install -r requirements.txt
+python brand_guard.py
 python miniai.py info
-python -m unittest discover -s tests -v
 ```
 
-CUDA is supported only where PyTorch and appropriate drivers support it. The app checks for CUDA, then MPS, then CPU. It does not promise acceleration for every GPU. No specific GPU hardware is named or required.
-
-## Create data and retrain tokenizer
-
-The **complete package includes the generated JSONL data and tokenizer**. If using the **code-only** archive, first generate the shards yourself:
+Generate the complete dataset and train the tokenizer once:
 
 ```sh
 python build_datasets.py --count 100000
 python miniai.py prepare --samples-per-domain 1000
 ```
 
-The dataset generator is streaming and deterministic and writes ~4 GB of plain JSONL for the full catalogue; leave sufficient free disk space. To create selected shards:
+The GitHub source checkout contains neither the generated 9.4M records nor `tokenizer/tokenizer.model`. The preparation commands above are necessary before training a fresh clone. Ensure there is sufficient disk space.
+
+## Full training
+
+This is the **full-epoch command**, not a 100-step demonstration. With the complete 9.4M-row dataset present, a 90% training split processes **8,460,000 records per epoch**. The exact token count depends on the tokenizer and content; it is logged as training proceeds.
 
 ```sh
-python build_datasets.py --count 100000 --domains kurdish_sorani arabic python cybersecurity
+python miniai.py train --device auto --precision auto --epochs 1 --sequence-length 1024 --batch-size 1 --grad-accum 8 --save-every 500
 ```
 
-`prepare` learns tokenizer subwords only from train-set rows. **Do not swap tokenizer after you start training** because old checkpoints will no longer be compatible. The provided bundled tokenizer is for this 94-shard corpus.
+The default `--max-steps` value is `0`, so training proceeds until the requested epochs finish, unless you stop the process or the runtime fails. Streaming packing is enabled by default to make better use of short examples. This does not mean training runs automatically on GitHub.
 
-## Train from random initialization
+For a CUDA GPU with sufficient memory, you can select the **full 6K training window**:
 
 ```sh
-python miniai.py train --device auto --epochs 1 --batch-size 1 --grad-accum 8 --sequence-length 256 --save-every 500
+python miniai.py train --device cuda --precision fp16 --epochs 1 --sequence-length 6144 --batch-size 1 --grad-accum 8 --save-every 200
 ```
 
-Train at full maximum sequence length **only if your hardware allows**:
+A 6K training sequence can be memory-intensive. Reducing `--sequence-length` to 1024 or 256 lowers training memory use without changing the model's maximum 6K context capacity. FP16 mixed precision does not make a randomly initialized model more knowledgeable on its own.
+
+## Resume after interruption
+
+Training saves a trusted checkpoint to `checkpoints/last.pt`. Restart with the same model, tokenizer, domains, precision, packing, learning-rate schedule, batch size and sequence length:
 
 ```sh
-python miniai.py train --device cuda --epochs 1 --batch-size 1 --grad-accum 16 --sequence-length 2048 --save-every 200
+python miniai.py train --device auto --precision auto --epochs 1 --sequence-length 1024 --batch-size 1 --grad-accum 8 --save-every 500 --resume checkpoints/last.pt
 ```
 
-Resume an existing trusted checkpoint with exactly matching model/tokenizer/data/hyperparameters:
+To train an additional epoch after finishing the first, set `--epochs 2` and resume from the saved checkpoint. Interrupted runs resume from the latest saved microbatch, not necessarily the moment power was lost.
+
+## Tests, evaluation and chat
 
 ```sh
-python miniai.py train --device auto --epochs 1 --batch-size 1 --grad-accum 8 --sequence-length 256 --resume checkpoints/last.pt
-```
-
-Short test (smaller model, **not** 86M):
-
-```sh
-python miniai.py train --tiny --sequence-length 64 --limit-samples 188 --batch-size 2 --grad-accum 2 --max-steps 2 --output checkpoints-smoke
-```
-
-`--limit-samples` is round-robin across all shards; without it training streams all selected data. A complete epoch through 9.4M rows may take **very long** and could outlast a Colab session. Save checkpoints to persistent storage. Checkpoint files may be hundreds of MB or more. No guarantee of convergence or high-quality output.
-
-## Validate dataset integrity
-
-```sh
-python tools/verify_datasets.py
-```
-
-For a trusted checkpoint, a validation loss check is also available:
-
-```sh
+python -m unittest discover -s tests -v
 python miniai.py evaluate --checkpoint checkpoints/last.pt --split validation --max-batches 20
-```
-
-## Local chat interface
-
-**After training** creates `checkpoints/last.pt`:
-
-```sh
 python miniai.py serve --device auto --port 8765
 ```
 
-Open <http://127.0.0.1:8765>. The Chat UI has dark/light mode, responsive layout, emojis and 20-language answer preference. **The language selector adds a prompt hint; it does not guarantee that a small or poorly trained model is fluent in that language.** The HTTP server binds only to localhost; it is not intended for public deployment.
+Open `http://127.0.0.1:8765` on the computer running the server. The local interface requires a trained checkpoint. Generated answers must be checked rather than assumed correct.
 
-## Colab
-
-Open [`notebooks/MATEN-T-MiniAI-v1-Colab.ipynb`](notebooks/MATEN-T-MiniAI-v1-Colab.ipynb) and follow the cells; upload the full ZIP to Google Drive and change ZIP_PATH if needed. Enable GPU runtime and monitor progress. A 9.4M-row full epoch can require far more time than one free Colab runtime. Model weights are saved to Drive.
-
-## License, verification and transparency
-
-Project-authored code and generated examples are distributed under the custom [M/ License v1.0](LICENSE.md). This license is **not OSI-approved** and has **not had a legal review**. Dependencies such as Python/PyTorch/SentencePiece have their **own licenses**, and third-party contributions must be independently licensed. See [QUALITY_REPORT](docs/QUALITY_REPORT.md) and [MODEL_CARD](docs/MODEL_CARD.md).
-
-This project covers educational, defensive cybersecurity data only. Do not treat the generated text as professional medical or security advice. **BY MATEN/T.**
-
-## MATEN/T attribution guard
-
-The source release includes `brand_guard.py`. `python miniai.py ...` and
-`python build_datasets.py ...` validate the presence of the original MATEN/T
-attribution in the key code, README, license and chat-UI files before starting.
-If a required notice is removed, the command stops with an explicit
-`M/ License` message. Run `python brand_guard.py` to validate the notices.
-
-**Limitations:** This is a local consistency check, not unbreakable DRM. A user
-with complete source access can bypass or modify it. The guard does not delete
-anything, modify dataset rows or checkpoints, or make network calls. The license
-text itself, not this guard, describes redistribution obligations. See
-`docs/ATTRIBUTION.md` for detailed behavior and tests.
-
-## FP16 mixed precision and more stable optimization
-
-**BY MATEN/T** — This source update adds explicit FP16 support. On a supported **CUDA** device, `--precision auto` chooses FP16 autocast with dynamic loss scaling. Model parameters and optimizer state remain FP32 for numerical stability (this is **mixed-precision training**, not storing the complete model in FP16). On CPU or MPS, auto chooses FP32. Use `--precision bf16` for a supported CUDA BF16 GPU; `--precision fp32` disables autocast. Explicit `--precision fp16` without CUDA gives a helpful error rather than silently pretending to use FP16.
+A tiny pipeline smoke test is available separately and **does not train the full model**:
 
 ```sh
-python miniai.py train --device cuda --precision fp16 --batch-size 1 --grad-accum 8 --sequence-length 256 --lr-schedule cosine --warmup-steps 100 --lr-decay-steps 10000 --max-steps 1000
+python miniai.py train --tiny --sequence-length 64 --limit-samples 256 --max-steps 2 --output checkpoints-smoke
 ```
 
-The LR now warms up, then decays smoothly to 10% of the initial LR by the configured decay step. Set `--lr-decay-steps` to a sensible expected **optimizer-step count** for your run (10,000 is a starter default). Gradient clipping was already present; FP16 loss scaling now explicitly adapts to overflow and skips unstable updates. Resume checkpoints record precision and LR settings. **None of these changes adds training tokens or makes the randomly initialized 86M model capable without adequate high-quality data and training.**
+## Project documentation
 
-### Attribution notice
+- [Complete training guide for PC and Colab](training.txt)
+- [Colab training notebook](notebooks/MATEN-T-MiniAI-v1-Colab.ipynb)
+- [Model card](docs/MODEL_CARD.md)
+- [Dataset card](docs/DATASET_CARD.md)
+- [Quality and testing report](docs/QUALITY_REPORT.md)
+- [M/ License](LICENSE.md)
 
-Removing required MATEN/T notices from project files results in a clear `M/ License` error on standard training, chat, dataset generation and standalone model entry paths. This is source-level validation and can be bypassed by someone who edits the open source itself. Licensing conditions, not the check, govern redistribution obligations. No models or datasets are deleted by the guard.
+No pretrained weights, professional benchmarks or completed full-dataset training run are included. This is a reproducible training project, not a ready-to-deploy production assistant. The attribution guard verifies required MATEN/T notices in standard entrypoints, but it is not tamper-proof DRM. M/ License is a custom license and is not OSI-approved.
+
+**BY MATEN/T.**

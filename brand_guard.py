@@ -19,7 +19,6 @@ RULES = {
     'facts.py': ('# BY MATEN/T',),
     'conversation_human.py': ('# BY MATEN/T',),
     'README.md': ('MATEN/T MiniAI v1', 'BY MATEN/T'),
-    'README.ckb.md': ('MATEN/T',),
     'LICENSE.md': ('M/ License', 'Maten Faesal (MATEN/T)'),
     'ui/index.html': ('<!-- BY MATEN/T', 'MATEN/T MiniAI'),
 }

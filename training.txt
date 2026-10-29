@@ -1,0 +1,129 @@
+BY MATEN/T — MATEN/T MiniAI v1
+FULL TRAINING GUIDE — WINDOWS, LINUX, MACOS AND GOOGLE COLAB
+M/ License v1.0
+
+MODEL AND TRAINING DATA
+=======================
+Parameters: 86,045,328.
+Maximum context: 6,144 tokens (6K) using RoPE.
+Tokenizer: SentencePiece BPE, 16,384 vocabulary pieces.
+Full generated corpus: 94 JSONL files x 100,000 records = 9,400,000
+synthetic records. Training split: 90%, or 8,460,000 records per epoch.
+
+The token count is NOT a fixed 343M or another hard-coded figure. It depends
+on the tokenizer and actual records. The trainer reports measured tokens_seen
+(input positions excluding padding) and supervised_targets (loss-bearing token
+positions), and stores both counts in checkpoints. The 9.4M records are mostly
+procedurally varied templates, not 9.4M expert-reviewed conversations.
+
+CHOOSING A COMPUTER
+===================
+Basic tests: modern 4-6 core CPU, 16 GB system RAM and SSD.
+GPU training starter: supported NVIDIA CUDA GPU with approximately 8-12 GB
+VRAM, 16-32 GB system RAM and short sequence lengths of 128 or 256. This
+may still run out of memory on some systems.
+Practical workstation: 6-12 core CPU, 32 GB system RAM, 16-24 GB CUDA VRAM,
+NVMe SSD, reliable cooling and an appropriate power supply.
+Full 6K training window: consider 24GB+ GPU memory; actual requirements can
+be higher depending on implementation and batch size. There is no guaranteed
+VRAM figure for all hardware. 20-50GB+ of available disk space is helpful
+for datasets and repeated optimizer checkpoints.
+CPU-only training is possible but slow over 8.46M rows. AMD GPU support
+depends on official ROCm/PyTorch compatibility for your particular system.
+Apple MPS follows the project's FP32 auto selection.
+
+INSTALLING
+==========
+Install Python 3.10+ and choose a compatible PyTorch build at:
+https://pytorch.org/get-started/locally/
+
+Windows PowerShell:
+  python -m venv .venv
+  .venv\Scripts\Activate.ps1
+
+Linux or macOS:
+  python3 -m venv .venv
+  source .venv/bin/activate
+
+Then:
+  python -m pip install -r requirements.txt
+  python miniai.py info
+  python -c "import torch; print('CUDA:',torch.cuda.is_available(),'CUDA build:',torch.version.cuda)"
+
+PREPARE THE COMPLETE CORPUS
+===========================
+  python build_datasets.py --count 100000
+  python miniai.py prepare --samples-per-domain 1000
+
+Do not change the tokenizer after you have started a training run. The
+previous 2K absolute-position checkpoint is incompatible with this new 6K
+RoPE architecture. Start a new training run with newly initialized weights.
+
+FULL TRAINING — NO 100-STEP CAP
+==============================
+  python miniai.py train --device auto --precision auto --epochs 1 --sequence-length 1024 --batch-size 1 --grad-accum 8 --save-every 500
+
+This command uses the full training split for one complete epoch; it does
+NOT contain --max-steps 100. Default --max-steps is zero, meaning no
+artificial step cap. Data is streamed from disk and short examples are
+packed into training blocks by default.
+
+On supported NVIDIA CUDA hardware, use FP16:
+  python miniai.py train --device cuda --precision fp16 --epochs 1 --sequence-length 1024 --batch-size 1 --grad-accum 8 --save-every 500
+
+For a full 6K training window, only if GPU memory allows:
+  python miniai.py train --device cuda --precision fp16 --epochs 1 --sequence-length 6144 --batch-size 1 --grad-accum 8 --save-every 200
+
+CPU example:
+  python miniai.py train --device cpu --precision fp32 --epochs 1 --sequence-length 256 --batch-size 1 --grad-accum 8 --save-every 500
+
+A longer model context does not mean every short generated training example
+automatically teaches genuine long-context reasoning. Use higher-quality
+long-form examples and independent evaluation for that objective.
+
+CHECKPOINTS AND RESUMING
+========================
+  python miniai.py train --device auto --precision auto --epochs 1 --sequence-length 1024 --batch-size 1 --grad-accum 8 --save-every 500 --resume checkpoints/last.pt
+
+Use exactly matching tokenizer, model, domains, batch size, accumulation,
+precision, packing mode and learning-rate settings. Resume picks up at the
+last saved checkpoint, not the exact point of a power failure. If the
+first epoch was already completed, use --epochs 2 to run a second one.
+Only open checkpoints obtained from trusted sources.
+
+LOGGED TOKEN COUNTS
+===================
+tokens_seen = input token positions observed by the model, excluding pads.
+supervised_targets = target positions used in the training loss.
+step = optimizer updates completed successfully, not dataset rows.
+They are tracked as training progresses; numbers are not fabricated.
+
+MEMORY AND ERROR RECOVERY
+=========================
+If CUDA is unavailable, install compatible drivers/PyTorch or choose CPU.
+For out-of-memory errors, lower --sequence-length (for example 256), use
+--batch-size 1, reduce evaluation batch size with --eval-batch-size 1 and
+close other GPU-heavy applications. If loss becomes NaN or Infinity,
+inspect the data and try FP32 or a lower learning rate. After a shutdown,
+use the resume command with the newest trusted checkpoint.
+
+EVALUATION AND LOCAL CHAT
+=========================
+  python miniai.py evaluate --checkpoint checkpoints/last.pt --split validation
+  python miniai.py serve --device auto --port 8765
+
+Open http://127.0.0.1:8765 on the same computer. A checkpoint is needed
+before chat works, and its outputs are not guaranteed correct.
+
+COLAB NOTEBOOK
+==============
+Open notebooks/MATEN-T-MiniAI-v1-Colab.ipynb and choose a GPU runtime.
+Use persistent Google Drive storage for checkpoints; a free session can
+disconnect before a complete epoch finishes. The notebook downloads code
+from this repository and generates the data and tokenizer locally.
+
+PROVENANCE AND ATTRIBUTION
+==========================
+BY MATEN/T. M/ License v1.0 is a custom license, not OSI approved.
+Required credit is checked by brand_guard.py in standard entrypoints, but
+this is source-level consistency checking, not invulnerable DRM.

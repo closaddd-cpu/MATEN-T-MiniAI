@@ -9,7 +9,7 @@ sys.path.insert(0,str(ROOT))
 from model import ModelConfig,MiniAI
 from build_datasets import make_record,FILES,CODE_LANGS,NATURAL_LANGS,DOMAINS
 from catalog import NATURAL,EXTRA_CODE
-from miniai import example,collate,load_tokenizer,device_for
+from miniai import example,collate,load_tokenizer,device_for,packed_batches,parser
 
 class ProjectTests(unittest.TestCase):
     def test_catalogue(self):
@@ -39,8 +39,34 @@ class ProjectTests(unittest.TestCase):
                 self.assertTrue(any(x in r['response'] for x in ['😊']))
     def test_model_configuration(self):
         cfg=ModelConfig()
-        self.assertEqual(cfg.context_length,2048)
+        self.assertEqual(cfg.context_length,6144)
+        self.assertEqual(cfg.d_ff,3240)
         self.assertEqual(cfg.vocab_size,16384)
+    def test_full_epoch_has_no_default_step_cap(self):
+        args=parser().parse_args(['train'])
+        self.assertEqual(args.max_steps,0)
+        self.assertTrue(args.pack)
+        self.assertEqual(args.sequence_length,1024)
+
+    def test_rope_backward(self):
+        cfg=ModelConfig(vocab_size=256,context_length=6144,n_layer=1,n_head=4,d_model=32,d_ff=64,dropout=0)
+        model=MiniAI(cfg)
+        x=torch.randint(0,256,(1,64))
+        _,loss=model(x,x)
+        self.assertTrue(torch.isfinite(loss).item())
+        loss.backward()
+
+    def test_packed_stream(self):
+        class Tok:
+            def piece_to_id(self,x):return {'<|user|>':4,'<|assistant|>':5,'<|end|>':6}[x]
+            def unk_id(self):return 0
+            def bos_id(self):return 1
+            def encode(self,s,out_type=int):return [7+(ord(ch)%20) for ch in s]
+        rows=[{'instruction':f'Question {i}','response':f'Answer {i}'} for i in range(60)]
+        batches_=list(packed_batches(rows,Tok(),64,2,3))
+        self.assertTrue(batches_)
+        self.assertEqual(tuple(batches_[0][0].shape),(2,64))
+
     def test_tokenizer_scripts(self):
         if not (ROOT/'tokenizer'/'tokenizer.model').exists():
             self.skipTest('Tokenizer binary is not shipped with the source-only repo; run prepare')

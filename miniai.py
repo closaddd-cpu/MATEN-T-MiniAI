@@ -125,6 +125,28 @@ def batches(rows, tokenizer, seq_len, batch_size, pad_id, skip=0):
             batch_no+=1;cache=[]
     if cache and batch_no>=skip: yield collate(cache,pad_id)
 
+def packed_batches(rows, tokenizer, seq_len, batch_size, pad_id, skip=0):
+    """Pack variable-length examples into dense blocks with streaming memory use."""
+    block_x,block_y,pending=[],[],[]
+    batch_no=0
+    for row in rows:
+        ids,targets=example(row,tokenizer,seq_len)
+        cursor=0
+        while cursor < len(ids):
+            take=min(seq_len-len(block_x),len(ids)-cursor)
+            block_x.extend(ids[cursor:cursor+take])
+            block_y.extend(targets[cursor:cursor+take])
+            cursor+=take
+            if len(block_x)==seq_len:
+                pending.append((block_x,block_y))
+                block_x,block_y=[],[]
+                if len(pending)==batch_size:
+                    if batch_no>=skip: yield collate(pending,pad_id)
+                    batch_no+=1;pending=[]
+    if block_x:pending.append((block_x,block_y))
+    if pending and batch_no>=skip:yield collate(pending,pad_id)
+
+
 def collate(pairs,pad_id):
     length=max(len(x) for x,_ in pairs)
     x=torch.full((len(pairs),length),pad_id,dtype=torch.long)
@@ -175,7 +197,7 @@ def train(args):
     opt=torch.optim.AdamW(model.parameters(),lr=args.lr,weight_decay=0.1)
     scaler=make_scaler(device,precision)
     out=Path(args.output);out.mkdir(parents=True,exist_ok=True)
-    start_epoch=0;micro_cursor=0;step=0
+    start_epoch=0;micro_cursor=0;step=0;tokens_seen=0;supervised_tokens_seen=0
     if args.resume:
         ck=read_checkpoint(args.resume)
         if ck['config']!=asdict(cfg):raise ValueError('Architecture mismatch with saved checkpoint')
@@ -187,6 +209,8 @@ def train(args):
             raise ValueError('Learning-rate schedule settings changed since checkpoint')
         if ck.get('scaler') and precision=='fp16':scaler.load_state_dict(ck['scaler'])
         start_epoch=ck['epoch'];micro_cursor=ck['micro_cursor'];step=ck['step']
+        if ck.get('pack') != args.pack: raise ValueError('Packing setting changed since checkpoint')
+        tokens_seen=ck.get('tokens_seen',0);supervised_tokens_seen=ck.get('supervised_tokens_seen',0)
         print(f'Resuming at epoch {start_epoch+1}, microbatch index {micro_cursor}, optimizer step {step}',flush=True)
     # Model/optimizer remain in device memory; input corpus is streamed through Python.
     def save(epoch, cursor):
@@ -194,7 +218,8 @@ def train(args):
              'model':model.state_dict(),'optimizer':opt.state_dict(),'scaler':scaler.state_dict(),
              'epoch':epoch,'micro_cursor':cursor,'step':step,'domains':args.domains or FILES,
              'batch_size':args.batch_size,'grad_accum':args.grad_accum,'sequence_length':seq_len,
-             'precision':precision,'lr_schedule_config':schedule}
+             'precision':precision,'lr_schedule_config':schedule,
+             'pack':args.pack,'tokens_seen':tokens_seen,'supervised_tokens_seen':supervised_tokens_seen}
         tmp=out/'last.tmp';torch.save(obj,tmp);os.replace(tmp,out/'last.pt')
         print(f'Checkpoint saved at step {step} -> {out/"last.pt"}',flush=True)
     for epoch in range(start_epoch,args.epochs):
@@ -202,8 +227,12 @@ def train(args):
         path_order=paths[epoch%len(paths):]+paths[:epoch%len(paths)]
         rows=file_rows(path_order,'train',max_rows=args.limit_samples)
         skip=micro_cursor if epoch==start_epoch else 0
-        for x,y in batches(rows,tok,seq_len,args.batch_size,tok.pad_id(),skip=skip):
-            micro+=1; x=x.to(device);y=y.to(device)
+        batch_source=packed_batches if args.pack else batches
+        for x,y in batch_source(rows,tok,seq_len,args.batch_size,tok.pad_id(),skip=skip):
+            micro+=1
+            tokens_seen+=int((x!=tok.pad_id()).sum().item())
+            supervised_tokens_seen+=int((y!=-100).sum().item())
+            x=x.to(device);y=y.to(device)
             with cast_for(device,precision):_,loss=model(x,y)
             if not torch.isfinite(loss):raise FloatingPointError('Non-finite training loss')
             scaler.scale(loss/args.grad_accum).backward();accumulated+=1;loss_total+=float(loss.item())
@@ -220,7 +249,7 @@ def train(args):
                 print('BY MATEN/T | FP16 overflow: optimizer step skipped; scaler reduced',flush=True)
                 continue
             step+=1
-            if step%args.log_every==0: print(f'epoch={epoch+1} step={step} lr={lr:.3g} precision={precision} mean_loss={loss_total/max(micro,1):.5f}',flush=True)
+            if step%args.log_every==0: print(f'epoch={epoch+1} step={step} lr={lr:.3g} precision={precision} mean_loss={loss_total/max(micro,1):.5f} tokens_seen={tokens_seen:,} supervised_targets={supervised_tokens_seen:,}',flush=True)
             if step%args.save_every==0:save(epoch,skip+micro)
             if args.max_steps and step>=args.max_steps:save(epoch,skip+micro);return
         if accumulated:
@@ -235,7 +264,7 @@ def train(args):
             scaler.step(opt);scaler.update();opt.zero_grad(set_to_none=True)
             if not (precision=='fp16' and scaler.get_scale()<before_scale):step+=1
         val=evaluate(model,paths,tok,device,seq_len,args.eval_batch_size,args.eval_batches,precision=precision)
-        print(f'Finished epoch={epoch+1}, validation loss={val:.5f}',flush=True)
+        print(f'Finished epoch={epoch+1}, validation loss={val:.5f}, tokens_seen={tokens_seen:,}, supervised_targets={supervised_tokens_seen:,}',flush=True)
         save(epoch+1,0)
         micro_cursor=0
     print('Training epochs complete. This does NOT imply reliable factual performance.',flush=True)
@@ -324,7 +353,9 @@ def parser():
     tr=sub.add_parser('train');tr.add_argument('--data',default=str(ROOT/'datasets'));tr.add_argument('--output',default=str(ROOT/'checkpoints'))
     tr.add_argument('--domains',nargs='+',choices=FILES);tr.add_argument('--device',default='auto',choices=['auto','cpu','cuda','mps'])
     tr.add_argument('--epochs',type=int,default=1);tr.add_argument('--batch-size',type=int,default=1);tr.add_argument('--grad-accum',type=int,default=8)
-    tr.add_argument('--sequence-length',type=int,default=256);tr.add_argument('--max-steps',type=int,default=0)
+    tr.add_argument('--sequence-length',type=int,default=1024);tr.add_argument('--max-steps',type=int,default=0)
+    tr.add_argument('--no-pack',action='store_false',dest='pack',help='Disable dense example packing')
+    tr.set_defaults(pack=True)
     tr.add_argument('--lr',type=float,default=3e-4);tr.add_argument('--seed',type=int,default=42)
     tr.add_argument('--precision',choices=['auto','fp16','bf16','fp32'],default='auto',
                     help='auto uses FP16 autocast+GradScaler on CUDA, FP32 on CPU/MPS')

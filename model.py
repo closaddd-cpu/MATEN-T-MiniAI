@@ -14,11 +14,11 @@ from torch.nn import functional as F
 @dataclass
 class ModelConfig:
     vocab_size: int = 16384
-    context_length: int = 2048
+    context_length: int = 6144
     n_layer: int = 10
     n_head: int = 12
     d_model: int = 768
-    d_ff: int = 3136
+    d_ff: int = 3240
     dropout: float = 0.1
 
     def validate(self):
@@ -33,10 +33,22 @@ class CausalSelfAttention(nn.Module):
         super().__init__()
         self.n_head=cfg.n_head
         self.d_head=cfg.d_model//cfg.n_head
+        if self.d_head % 2: raise ValueError('RoPE requires even head dimensions')
         self.qkv=nn.Linear(cfg.d_model,3*cfg.d_model)
         self.proj=nn.Linear(cfg.d_model,cfg.d_model)
         self.dropout=cfg.dropout
         self.resid_dropout=nn.Dropout(cfg.dropout)
+
+    @staticmethod
+    def apply_rope(tensor):
+        """Rotary position embeddings for variable-length causal attention."""
+        n,d = tensor.size(-2),tensor.size(-1)
+        inv = 10000.0 ** (-torch.arange(0,d,2,device=tensor.device,dtype=torch.float32)/d)
+        theta = torch.arange(n,device=tensor.device,dtype=torch.float32)[:,None]*inv[None,:]
+        cs, sn = theta.cos()[None,None,:,:],theta.sin()[None,None,:,:]
+        x0,x1=tensor.float()[...,0::2],tensor.float()[...,1::2]
+        out=torch.stack((x0*cs-x1*sn,x0*sn+x1*cs),dim=-1).flatten(-2)
+        return out.to(dtype=tensor.dtype)
 
     def forward(self,x):
         b,t,c=x.shape
@@ -44,6 +56,8 @@ class CausalSelfAttention(nn.Module):
         q=q.view(b,t,self.n_head,self.d_head).transpose(1,2)
         k=k.view(b,t,self.n_head,self.d_head).transpose(1,2)
         v=v.view(b,t,self.n_head,self.d_head).transpose(1,2)
+        q=self.apply_rope(q)
+        k=self.apply_rope(k)
         y=F.scaled_dot_product_attention(q,k,v,dropout_p=self.dropout if self.training else 0.,is_causal=True)
         return self.resid_dropout(self.proj(y.transpose(1,2).contiguous().view(b,t,c)))
 
@@ -70,7 +84,6 @@ class MiniAI(nn.Module):
         cfg.validate()
         self.cfg=cfg
         self.tok_emb=nn.Embedding(cfg.vocab_size,cfg.d_model)
-        self.pos_emb=nn.Embedding(cfg.context_length,cfg.d_model)
         self.drop=nn.Dropout(cfg.dropout)
         self.blocks=nn.ModuleList(Block(cfg) for _ in range(cfg.n_layer))
         self.ln_f=nn.LayerNorm(cfg.d_model)
@@ -89,8 +102,7 @@ class MiniAI(nn.Module):
     def forward(self,input_ids,targets=None):
         b,t=input_ids.shape
         if t>self.cfg.context_length:raise ValueError(f'Sequence {t} > context {self.cfg.context_length}')
-        position=torch.arange(t,device=input_ids.device)
-        x=self.drop(self.tok_emb(input_ids)+self.pos_emb(position)[None,:,:])
+        x=self.drop(self.tok_emb(input_ids))
         for block in self.blocks:x=block(x)
         x=self.ln_f(x)
         logits=self.head(x)

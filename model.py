@@ -1,5 +1,9 @@
 # BY MATEN/T — Original causal Transformer trained from scratch.
 # M/ License v1.0; PyTorch is a separate dependency under its own license.
+from brand_guard import enforce_attribution
+# The project checks its original credit before exposing the model, too.
+# This is local source-level consistency checking, not tamper-proof DRM.
+enforce_attribution()
 from dataclasses import asdict, dataclass
 import math
 import torch

@@ -36,9 +36,43 @@ def device_for(name):
     if name=='mps' and not (hasattr(torch.backends,'mps') and torch.backends.mps.is_available()):raise RuntimeError('MPS unavailable')
     return torch.device(name)
 
-def cast_for(dev):
-    if dev.type!='cuda':return nullcontext()
-    return torch.autocast('cuda',dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16)
+def resolve_precision(device, choice='auto'):
+    """FP16 mixed precision on CUDA; safely stay in FP32 on CPU/MPS."""
+    if choice not in ('auto', 'fp16', 'bf16', 'fp32'):
+        raise ValueError('precision must be auto, fp16, bf16 or fp32')
+    if choice == 'auto':
+        return 'fp16' if device.type == 'cuda' else 'fp32'
+    if choice in ('fp16', 'bf16') and device.type != 'cuda':
+        raise ValueError(f'{choice} mixed-precision training requires a CUDA device; use --precision auto or fp32.')
+    if choice == 'bf16' and not torch.cuda.is_bf16_supported():
+        raise ValueError('BF16 is not supported on this CUDA device; choose --precision fp16.')
+    return choice
+
+
+def cast_for(device, precision='auto'):
+    mode=resolve_precision(device, precision)
+    if mode == 'fp32': return nullcontext()
+    return torch.autocast(device_type='cuda',dtype=torch.float16 if mode=='fp16' else torch.bfloat16)
+
+
+def make_scaler(device, precision):
+    """Dynamic gradient scaling avoids FP16 gradient underflow."""
+    enabled=device.type=='cuda' and precision=='fp16'
+    try: return torch.amp.GradScaler('cuda',enabled=enabled)
+    except (AttributeError,TypeError): return torch.cuda.amp.GradScaler(enabled=enabled)
+
+
+def learning_rate_at(step, base_lr, warmup, decay, min_ratio=0.1, schedule='cosine'):
+    """Warmup and bounded cosine decay; step counts *optimizer* updates."""
+    if base_lr <= 0 or warmup < 0 or decay < 1 or not (0 <= min_ratio <= 1):
+        raise ValueError('Invalid learning-rate schedule settings')
+    if schedule not in ('cosine','constant'):raise ValueError('Invalid LR schedule')
+    if warmup and step < warmup:
+        return base_lr * (step+1)/warmup
+    if schedule=='constant':return base_lr
+    if decay <= warmup:raise ValueError('--lr-decay-steps must exceed --warmup-steps for cosine decay')
+    progress=min(1.0,max(0.0,(step-warmup)/(decay-warmup)))
+    return base_lr*(min_ratio+(1-min_ratio)*0.5*(1+math.cos(math.pi*progress)))
 
 def file_rows(paths, split, max_rows=0):
     """Stream without loading all the JSONL corpus into RAM.
@@ -107,13 +141,13 @@ def read_checkpoint(path):
     # torch.load may deserialize objects: only load files you trust.
     return torch.load(path,map_location='cpu',weights_only=False)
 
-def evaluate(model,paths,tok,device,limit,bsize,max_batches,split='validation'):
+def evaluate(model,paths,tok,device,limit,bsize,max_batches,split='validation',precision='auto'):
     model.eval(); losses=[]
     with torch.inference_mode():
         rows=file_rows(paths,split,max_rows=max_batches*bsize)
         for x,y in batches(rows,tok,limit,bsize,tok.pad_id()):
             x=x.to(device);y=y.to(device)
-            with cast_for(device):_,loss=model(x,y)
+            with cast_for(device,precision):_,loss=model(x,y)
             losses.append(float(loss.item()))
     model.train()
     return sum(losses)/len(losses) if losses else float('nan')
@@ -127,16 +161,19 @@ def train(args):
     seq_len=min(args.sequence_length,cfg.context_length)
     if seq_len<16:raise ValueError('sequence length must be at least 16')
     if args.batch_size<1 or args.grad_accum<1 or args.epochs<1:raise ValueError('batch-size, grad-accum, epochs must be positive')
-    print(f'BY MATEN/T | device={device}, context_capacity={cfg.context_length}, training_sequence={seq_len}',flush=True)
+    precision=resolve_precision(device,args.precision)
+    schedule=(args.lr_schedule, args.warmup_steps, args.lr_decay_steps, args.min_lr_ratio, args.lr)
+    learning_rate_at(0,args.lr,args.warmup_steps,args.lr_decay_steps,args.min_lr_ratio,args.lr_schedule)  # validate early
+    if args.lr_schedule=='cosine' and args.lr_decay_steps<=args.warmup_steps:raise ValueError('LR decay steps must exceed warmup steps')
+    if args.log_every<1 or args.save_every<1:raise ValueError('log-every and save-every must be positive')
+    print(f'BY MATEN/T | device={device}, precision={precision} (mixed precision; FP32 master weights), context_capacity={cfg.context_length}, training_sequence={seq_len}',flush=True)
     print('IMPORTANT | this is training from random initialization on synthetic data; output quality is not guaranteed.',flush=True)
     torch.manual_seed(args.seed);random.seed(args.seed)
     if device.type=='cpu':torch.set_num_threads(min(os.cpu_count() or 1,8))
     model=MiniAI(cfg).to(device)
     print('Trainable parameters:',format(sum(p.numel() for p in model.parameters()),','),flush=True)
     opt=torch.optim.AdamW(model.parameters(),lr=args.lr,weight_decay=0.1)
-    use_fp16=device.type=='cuda' and not torch.cuda.is_bf16_supported()
-    try: scaler=torch.amp.GradScaler('cuda',enabled=use_fp16)
-    except (AttributeError,TypeError):scaler=torch.cuda.amp.GradScaler(enabled=use_fp16)
+    scaler=make_scaler(device,precision)
     out=Path(args.output);out.mkdir(parents=True,exist_ok=True)
     start_epoch=0;micro_cursor=0;step=0
     if args.resume:
@@ -146,7 +183,9 @@ def train(args):
         if ck.get('batch_size')!=args.batch_size or ck.get('grad_accum')!=args.grad_accum or ck.get('sequence_length')!=seq_len:
             raise ValueError('Batch / accumulation / sequence-length settings changed since checkpoint')
         model.load_state_dict(ck['model']);opt.load_state_dict(ck['optimizer']);
-        if ck.get('scaler'):scaler.load_state_dict(ck['scaler'])
+        if ck.get('lr_schedule_config') and tuple(ck['lr_schedule_config'])!=schedule:
+            raise ValueError('Learning-rate schedule settings changed since checkpoint')
+        if ck.get('scaler') and precision=='fp16':scaler.load_state_dict(ck['scaler'])
         start_epoch=ck['epoch'];micro_cursor=ck['micro_cursor'];step=ck['step']
         print(f'Resuming at epoch {start_epoch+1}, microbatch index {micro_cursor}, optimizer step {step}',flush=True)
     # Model/optimizer remain in device memory; input corpus is streamed through Python.
@@ -154,7 +193,8 @@ def train(args):
         obj={'created_by':'MATEN/T','license':'M/ License v1.0','config':asdict(cfg),
              'model':model.state_dict(),'optimizer':opt.state_dict(),'scaler':scaler.state_dict(),
              'epoch':epoch,'micro_cursor':cursor,'step':step,'domains':args.domains or FILES,
-             'batch_size':args.batch_size,'grad_accum':args.grad_accum,'sequence_length':seq_len}
+             'batch_size':args.batch_size,'grad_accum':args.grad_accum,'sequence_length':seq_len,
+             'precision':precision,'lr_schedule_config':schedule}
         tmp=out/'last.tmp';torch.save(obj,tmp);os.replace(tmp,out/'last.pt')
         print(f'Checkpoint saved at step {step} -> {out/"last.pt"}',flush=True)
     for epoch in range(start_epoch,args.epochs):
@@ -164,14 +204,23 @@ def train(args):
         skip=micro_cursor if epoch==start_epoch else 0
         for x,y in batches(rows,tok,seq_len,args.batch_size,tok.pad_id(),skip=skip):
             micro+=1; x=x.to(device);y=y.to(device)
-            with cast_for(device):_,loss=model(x,y)
+            with cast_for(device,precision):_,loss=model(x,y)
             if not torch.isfinite(loss):raise FloatingPointError('Non-finite training loss')
             scaler.scale(loss/args.grad_accum).backward();accumulated+=1;loss_total+=float(loss.item())
             if accumulated<args.grad_accum:continue
             scaler.unscale_(opt);torch.nn.utils.clip_grad_norm_(model.parameters(),1.)
+            lr=learning_rate_at(step,args.lr,args.warmup_steps,args.lr_decay_steps,args.min_lr_ratio,args.lr_schedule)
+            for group in opt.param_groups:group['lr']=lr
+            before_scale=scaler.get_scale()
             scaler.step(opt);scaler.update();opt.zero_grad(set_to_none=True)
-            accumulated=0;step+=1
-            if step%args.log_every==0: print(f'epoch={epoch+1} step={step} mean_loss={loss_total/max(micro,1):.5f}',flush=True)
+            # On FP16 overflow GradScaler skips the optimizer update. Do not count it as a trained step.
+            skipped=precision=='fp16' and scaler.get_scale()<before_scale
+            accumulated=0
+            if skipped:
+                print('BY MATEN/T | FP16 overflow: optimizer step skipped; scaler reduced',flush=True)
+                continue
+            step+=1
+            if step%args.log_every==0: print(f'epoch={epoch+1} step={step} lr={lr:.3g} precision={precision} mean_loss={loss_total/max(micro,1):.5f}',flush=True)
             if step%args.save_every==0:save(epoch,skip+micro)
             if args.max_steps and step>=args.max_steps:save(epoch,skip+micro);return
         if accumulated:
@@ -180,8 +229,12 @@ def train(args):
             for p in model.parameters():
                 if p.grad is not None:p.grad.mul_(factor)
             scaler.unscale_(opt);torch.nn.utils.clip_grad_norm_(model.parameters(),1.)
-            scaler.step(opt);scaler.update();opt.zero_grad(set_to_none=True);step+=1
-        val=evaluate(model,paths,tok,device,seq_len,args.eval_batch_size,args.eval_batches)
+            lr=learning_rate_at(step,args.lr,args.warmup_steps,args.lr_decay_steps,args.min_lr_ratio,args.lr_schedule)
+            for group in opt.param_groups:group['lr']=lr
+            before_scale=scaler.get_scale()
+            scaler.step(opt);scaler.update();opt.zero_grad(set_to_none=True)
+            if not (precision=='fp16' and scaler.get_scale()<before_scale):step+=1
+        val=evaluate(model,paths,tok,device,seq_len,args.eval_batch_size,args.eval_batches,precision=precision)
         print(f'Finished epoch={epoch+1}, validation loss={val:.5f}',flush=True)
         save(epoch+1,0)
         micro_cursor=0
@@ -273,6 +326,13 @@ def parser():
     tr.add_argument('--epochs',type=int,default=1);tr.add_argument('--batch-size',type=int,default=1);tr.add_argument('--grad-accum',type=int,default=8)
     tr.add_argument('--sequence-length',type=int,default=256);tr.add_argument('--max-steps',type=int,default=0)
     tr.add_argument('--lr',type=float,default=3e-4);tr.add_argument('--seed',type=int,default=42)
+    tr.add_argument('--precision',choices=['auto','fp16','bf16','fp32'],default='auto',
+                    help='auto uses FP16 autocast+GradScaler on CUDA, FP32 on CPU/MPS')
+    tr.add_argument('--lr-schedule',choices=['cosine','constant'],default='cosine')
+    tr.add_argument('--warmup-steps',type=int,default=100)
+    tr.add_argument('--lr-decay-steps',type=int,default=10000,
+                    help='Set to expected total optimizer steps; decay to --min-lr-ratio')
+    tr.add_argument('--min-lr-ratio',type=float,default=0.1)
     tr.add_argument('--save-every',type=int,default=500);tr.add_argument('--log-every',type=int,default=20)
     tr.add_argument('--eval-batches',type=int,default=10);tr.add_argument('--eval-batch-size',type=int,default=2)
     tr.add_argument('--resume',default='');tr.add_argument('--limit-samples',type=int,default=0)
@@ -288,6 +348,7 @@ def parser():
     ev.add_argument('--domains',nargs='+',choices=FILES);ev.add_argument('--split',default='validation',choices=['validation','test'])
     ev.add_argument('--sequence-length',type=int,default=256);ev.add_argument('--batch-size',type=int,default=2)
     ev.add_argument('--max-batches',type=int,default=20)
+    ev.add_argument('--precision',choices=['auto','fp16','bf16','fp32'],default='auto')
     sub.add_parser('info')
     return p
 
@@ -300,7 +361,7 @@ if __name__=='__main__':
     elif args.command=='evaluate':
         device=device_for(args.device); model,cfg=loaded_model(args.checkpoint,device)
         if args.sequence_length>cfg.context_length:raise ValueError('Evaluation sequence exceeds context length')
-        loss=evaluate(model,data_files(args.data,args.domains),load_tokenizer(),device,args.sequence_length,args.batch_size,args.max_batches,args.split)
+        loss=evaluate(model,data_files(args.data,args.domains),load_tokenizer(),device,args.sequence_length,args.batch_size,args.max_batches,args.split,precision=args.precision)
         print(f'BY MATEN/T | {args.split} loss: {loss:.6f}; synthetic template overlap may inflate apparent quality.')
     else:
         cfg=ModelConfig()

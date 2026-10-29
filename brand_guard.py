@@ -11,6 +11,7 @@ import sys
 
 OWNER = 'MATEN/T'
 RULES = {
+    'brand_guard.py': ('# BY MATEN/T', 'M/ License v1.0'),
     'miniai.py': ('# BY MATEN/T', 'MATEN/T MiniAI v1'),
     'model.py': ('# BY MATEN/T',),
     'build_datasets.py': ('# BY MATEN/T',),
@@ -38,7 +39,7 @@ def verify_attribution(root: Path | None = None) -> bool:
         if not all(notice in contents for notice in notices):
             raise AttributionError(
                 f'M/ License: required MATEN/T attribution missing or changed in {name}. '
-                'Restore the original notice to continue.'
+                'Removing the MATEN/T credit is not permitted for redistributed copies; restore the original notice to continue.'
             )
     return True
 

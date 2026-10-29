@@ -16,7 +16,7 @@ From-scratch educational decoder language model: **86,019,712 parameters**, **2,
 | Model | 10-layer causal decoder Transformer, 12 heads, width 768, FFN 3136 |
 | Maximum context | **2,048 tokens** |
 | Tokenizer | SentencePiece BPE, **16,384** vocabulary items |
-| Training | AdamW, gradient accumulation, optional CUDA/ROCm-compatible or MPS backend if supported by installed PyTorch, CPU fallback |
+| Training | AdamW, gradient accumulation, FP16 CUDA autocast + dynamic GradScaler, optional BF16/FP32, LR warmup and cosine decay, CPU FP32 fallback |
 | Inference | Local Python HTTP chat; model must be trained first |
 | Optional C++ | Data row-count utility; model and optimization use PyTorch |
 | Data | 94 files × 100,000 records = **9,400,000** synthetic rows |
@@ -130,6 +130,16 @@ anything, modify dataset rows or checkpoints, or make network calls. The license
 text itself, not this guard, describes redistribution obligations. See
 `docs/ATTRIBUTION.md` for detailed behavior and tests.
 
+## FP16 mixed precision and more stable optimization
 
-## Source checkout
-This repository provides the source and generator. Pre-generated 9.4M JSONL rows, tokenizer model, and trained weights are not bundled in GitHub; generate data and prepare tokenizer following the instructions above.
+**BY MATEN/T** — This source update adds explicit FP16 support. On a supported **CUDA** device, `--precision auto` chooses FP16 autocast with dynamic loss scaling. Model parameters and optimizer state remain FP32 for numerical stability (this is **mixed-precision training**, not storing the complete model in FP16). On CPU or MPS, auto chooses FP32. Use `--precision bf16` for a supported CUDA BF16 GPU; `--precision fp32` disables autocast. Explicit `--precision fp16` without CUDA gives a helpful error rather than silently pretending to use FP16.
+
+```sh
+python miniai.py train --device cuda --precision fp16 --batch-size 1 --grad-accum 8 --sequence-length 256 --lr-schedule cosine --warmup-steps 100 --lr-decay-steps 10000 --max-steps 1000
+```
+
+The LR now warms up, then decays smoothly to 10% of the initial LR by the configured decay step. Set `--lr-decay-steps` to a sensible expected **optimizer-step count** for your run (10,000 is a starter default). Gradient clipping was already present; FP16 loss scaling now explicitly adapts to overflow and skips unstable updates. Resume checkpoints record precision and LR settings. **None of these changes adds training tokens or makes the randomly initialized 86M model capable without adequate high-quality data and training.**
+
+### Attribution notice
+
+Removing required MATEN/T notices from project files results in a clear `M/ License` error on standard training, chat, dataset generation and standalone model entry paths. This is source-level validation and can be bypassed by someone who edits the open source itself. Licensing conditions, not the check, govern redistribution obligations. No models or datasets are deleted by the guard.

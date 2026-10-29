@@ -47,3 +47,13 @@ python miniai.py serve
 بەرنامەکە بە هەڵەیەکی ڕوون دەوەستێت. فایلەکان نا‌سڕێتەوە.
 ئەمە پاراستنی ١٠٠٪ نییە: کەسێک کە دەستی بە سورس کۆد بگات
 دەتوانێت خۆی پشکنینەکە لاببات. مەرجەکانی ماف لە `LICENSE.md` دان.
+
+## ڕاهێنانی FP16 — BY MATEN/T
+
+لە CUDA GPU ـی گونجاودا `--precision fp16` بە شێوەی mixed precision بەکاردێت (autocast + GradScaler). لە CPU بە `--precision auto` سیستەم بە FP32 کاردەکات؛ هیچ بانگەشەیەک نییە بۆ FP16 لە CPU. Warmup و cosine learning-rate schedule زیادکراون بۆ جێگیری باشتر؛ ئەمە بەڵێنی مۆدێلی زاناتر نییە هەتا ڕاهێنانی ڕاستەقینە ئەنجام بدرێت.
+
+```sh
+python miniai.py train --device cuda --precision fp16 --batch-size 1 --grad-accum 8 --sequence-length 256 --max-steps 1000
+```
+
+لابردنی نووسینی پێویستی MATEN/T لە فایلە سەرەکییەکان هەڵەی ڕوون پیشان دەدات؛ ئەمە پاراستنی تەواوی کۆدی ئاشکرا نییە.

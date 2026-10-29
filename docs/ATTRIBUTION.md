@@ -28,3 +28,5 @@ check raises an AttributionError. It does not modify the real training data.
   private user data.
 - The custom M/ License is not OSI-approved or legally vetted.
 - Existing licenses of external packages remain in force.
+
+The standard `model.py` entry path now also runs local attribution consistency checks. Removing MATEN/T attribution produces a clear startup error; it is not tamper-proof protection against source edits. No destructive actions are taken. BY MATEN/T.

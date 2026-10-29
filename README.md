@@ -44,6 +44,22 @@ python miniai.py prepare --samples-per-domain 1000
 
 The GitHub source checkout contains neither the generated 9.4M records nor `tokenizer/tokenizer.model`. The preparation commands above are necessary before training a fresh clone. Ensure there is sufficient disk space.
 
+## One-command full training
+
+To generate the complete dataset, prepare the tokenizer and launch a full uncapped training epoch from one command, run:
+
+```sh
+python train_full.py
+```
+
+The launcher checks shard counts and SHA-256 hashes. If it detects a modified or partial dataset, it preserves the original and generates a fresh complete corpus in a separate folder. It resumes from a compatible `checkpoints/last.pt` if one exists. This can take substantial time and disk space; it runs only on a computer where you explicitly start it.
+
+To select the full 6K training window on supported CUDA hardware with sufficient memory:
+
+```sh
+python train_full.py --device cuda --precision fp16 --sequence-length 6144
+```
+
 ## Full training
 
 This is the **full-epoch command**, not a 100-step demonstration. With the complete 9.4M-row dataset present, a 90% training split processes **8,460,000 records per epoch**. The exact token count depends on the tokenizer and content; it is logged as training proceeds.

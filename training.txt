@@ -59,6 +59,23 @@ Do not change the tokenizer after you have started a training run. The
 previous 2K absolute-position checkpoint is incompatible with this new 6K
 RoPE architecture. Start a new training run with newly initialized weights.
 
+ONE-COMMAND AUTOMATED FULL TRAINING
+===================================
+  python train_full.py
+
+This starts the full end-to-end workflow when you run the command on your
+own computer. It prepares missing datasets, verifies actual file counts and
+SHA-256 checksums, prepares a tokenizer if needed, runs complete epochs and
+resumes a compatible local checkpoint.
+
+For CUDA FP16 and the full 6K sequence window (only if VRAM is sufficient):
+  python train_full.py --device cuda --precision fp16 --sequence-length 6144
+
+It never silently overwrites existing modified training data: an incomplete
+default corpus is preserved and the full generated corpus is written to a
+separate directory. The project does not start GPU training merely because
+files were published on GitHub.
+
 FULL TRAINING — NO 100-STEP CAP
 ==============================
   python miniai.py train --device auto --precision auto --epochs 1 --sequence-length 1024 --batch-size 1 --grad-accum 8 --save-every 500

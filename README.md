@@ -131,6 +131,5 @@ text itself, not this guard, describes redistribution obligations. See
 `docs/ATTRIBUTION.md` for detailed behavior and tests.
 
 
-## GitHub source distribution
-
-This repository publishes the **source code and the dataset generator**, not the 9.4M-row generated data, tokenizer binary, or trained checkpoints. To produce data locally, run `python build_datasets.py` and follow the preparation instructions above before model training. Source code is not a trained AI model.
+## Source checkout
+This repository provides the source and generator. Pre-generated 9.4M JSONL rows, tokenizer model, and trained weights are not bundled in GitHub; generate data and prepare tokenizer following the instructions above.

@@ -86,7 +86,7 @@ class ReleaseTests(unittest.TestCase):
     def test_validation_evaluates_holdout_tokens(self):
         with tempfile.TemporaryDirectory() as temp:
             f=Path(temp)/'data.txt'
-            f.write_text(''.join(f'Document number {i} about a different topic\\n' for i in range(60)),encoding='utf-8')
+            f.write_text(''.join(f'Document number {i} about a different topic\n' for i in range(60)),encoding='utf-8')
             cfg=ModelConfig(vocab_size=256,context_length=32,n_layer=1,n_head=4,d_model=32,d_ff=64,dropout=0)
             model=MiniAI(cfg)
             model.train()

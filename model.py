@@ -1,10 +1,8 @@
 # BY MATEN/T — Original causal Transformer trained from scratch.
 # M/ License v1.0; PyTorch is a separate dependency under its own license.
-from brand_guard import enforce_attribution
-# The project checks its original credit before exposing the model, too.
-# This is local source-level consistency checking, not tamper-proof DRM.
-enforce_attribution()
 from dataclasses import asdict, dataclass
+from brand_guard import enforce_attribution
+enforce_attribution()
 import math
 import torch
 from torch import nn
@@ -18,7 +16,7 @@ class ModelConfig:
     n_layer: int = 10
     n_head: int = 12
     d_model: int = 768
-    d_ff: int = 3240
+    d_ff: int = 4152
     dropout: float = 0.1
 
     def validate(self):
@@ -33,7 +31,7 @@ class CausalSelfAttention(nn.Module):
         super().__init__()
         self.n_head=cfg.n_head
         self.d_head=cfg.d_model//cfg.n_head
-        if self.d_head % 2: raise ValueError('RoPE requires even head dimensions')
+        if self.d_head % 2: raise ValueError('RoPE requires an even head dimension')
         self.qkv=nn.Linear(cfg.d_model,3*cfg.d_model)
         self.proj=nn.Linear(cfg.d_model,cfg.d_model)
         self.dropout=cfg.dropout
@@ -41,14 +39,15 @@ class CausalSelfAttention(nn.Module):
 
     @staticmethod
     def apply_rope(tensor):
-        """Rotary position embeddings for variable-length causal attention."""
-        n,d = tensor.size(-2),tensor.size(-1)
-        inv = 10000.0 ** (-torch.arange(0,d,2,device=tensor.device,dtype=torch.float32)/d)
-        theta = torch.arange(n,device=tensor.device,dtype=torch.float32)[:,None]*inv[None,:]
-        cs, sn = theta.cos()[None,None,:,:],theta.sin()[None,None,:,:]
-        x0,x1=tensor.float()[...,0::2],tensor.float()[...,1::2]
-        out=torch.stack((x0*cs-x1*sn,x0*sn+x1*cs),dim=-1).flatten(-2)
-        return out.to(dtype=tensor.dtype)
+        # Rotary position embeddings: no learned absolute position table.
+        length, width = tensor.size(-2), tensor.size(-1)
+        inv_freq = 10000.0 ** (-torch.arange(0, width, 2, device=tensor.device, dtype=torch.float32) / width)
+        angles = torch.arange(length, device=tensor.device, dtype=torch.float32)[:, None] * inv_freq[None, :]
+        cos = angles.cos()[None, None, :, :]
+        sin = angles.sin()[None, None, :, :]
+        even, odd = tensor.float()[..., 0::2], tensor.float()[..., 1::2]
+        rotated = torch.stack((even * cos - odd * sin, even * sin + odd * cos), dim=-1).flatten(-2)
+        return rotated.to(dtype=tensor.dtype)
 
     def forward(self,x):
         b,t,c=x.shape

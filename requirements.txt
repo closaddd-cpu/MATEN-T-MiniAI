@@ -1,3 +1,4 @@
-# BY MATEN/T | M/ License covers project code, not dependencies.
+# BY MATEN/T | M/ License covers project code; dependencies retain own licenses.
 torch>=2.2,<3
 sentencepiece>=0.2,<1
+safetensors>=0.4,<1

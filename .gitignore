@@ -7,10 +7,12 @@ __pycache__/
 *.tmp
 tokenizer/corpus_for_tokenizer.txt
 
-# Locally generated training data and tokenizer outputs
+# Locally trained data and model artifacts
 datasets/*.jsonl
 datasets_full_100k/
+pretrain_checkpoints/
+lora_output/
+release-v1.1/
 tokenizer/*.model
 tokenizer/*.vocab
-checkpoints-*/
 .venv/

@@ -40,7 +40,7 @@ class ProjectTests(unittest.TestCase):
     def test_model_configuration(self):
         cfg=ModelConfig()
         self.assertEqual(cfg.context_length,6144)
-        self.assertEqual(cfg.d_ff,3240)
+        self.assertEqual(cfg.d_ff,4152)
         self.assertEqual(cfg.vocab_size,16384)
     def test_full_epoch_has_no_default_step_cap(self):
         args=parser().parse_args(['train'])

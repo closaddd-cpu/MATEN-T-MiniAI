@@ -1,20 +1,21 @@
-# Model Card — MATEN/T MiniAI v1
+# Model Card — MATEN/T MiniAI v1.1
 
-**BY MATEN/T** · **M/ License v1.0**
+**BY MATEN/T — M/ License v1.0**
 
 ## Architecture
-- Decoder-only Transformer with 10 blocks, 12 attention heads, hidden width 768 and FFN width 3240.
-- **86,045,328 trainable parameters**.
-- **6,144-token context** with Rotary Position Embeddings (RoPE).
-- SentencePiece BPE, 16,384 vocabulary items.
-- FP16 autocast with GradScaler on supported CUDA devices; optional BF16; FP32 otherwise.
-- AdamW training, warmup, cosine learning-rate schedule, gradient accumulation, gradient clipping, streamed packed examples, token accounting, save/resume.
+- Decoder-only causal Transformer, 100,062,768 base trainable parameters.
+- 10 Transformer layers, hidden width 768, 12 attention heads, FFN width 4152.
+- 6,144-token maximum context with RoPE and 16,384 SentencePiece BPE vocabulary pieces.
+- Next-token causal pretraining over raw text and JSONL, with streaming packing and EOS document boundaries.
+- Separate LoRA SFT adapters for attention query/key/value and output projections.
+- PyTorch training with AdamW, gradient clipping, warmup/decay, FP16 AMP and atomic checkpoints.
+- SafeTensors FP16 export with config and true SentencePiece files; LoRA can be merged for inference.
 
-## Compatibility and availability
-This architecture is not checkpoint-compatible with the earlier 2,048-token learned-absolute-position model. This repository does **not** provide trained model weights or a prepared tokenizer. Those must be generated and trained.
+## Release status
+The public repository contains runnable training code and a dataset generator, **not pretrained 100M weights**. The earlier 86M checkpoints cannot be loaded into this changed architecture. The 6K context size is an architectural limit, not a measured retrieval/attention benchmark.
 
-## Dataset and limitations
-Up to 9.4M procedurally generated JSONL examples across 94 domains. The examples are short, heavily template-based and not independently human reviewed. A 6K context capacity does not mean 6K reading accuracy. Real fluency in supported languages, expert code generation, reliable scientific reasoning and robust cybersecurity judgments are **not demonstrated**.
+## Training limitations
+The 9.4M generated records are mostly short synthetic templates; they are insufficient evidence of fluent conversation, expert programming or deep scientific reasoning. Next-token learning can result in memorization. Using genuine licensed training text, removing duplicates and evaluating on human-reviewed, held-out data is required to assess understanding and generalization.
 
-## Evaluation
-Source-level CPU smoke tests are not a substitute for full-run convergence and independent benchmarks. Compare validation losses across checkpoints and use held-out, naturally authored test sets. Do not publish an untrained model as an effective assistant.
+## Safety and provenance
+Do not use generated material for high-stakes decisions without review. LoRA adapters are base-model-specific and must match model architecture and tokenizer. The project uses a custom M/ License (not OSI approved).

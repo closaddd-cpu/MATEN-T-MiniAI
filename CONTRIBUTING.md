@@ -1,5 +1,5 @@
-# Contributing to MATEN/T MiniAI
+# Contributing to MATEN/T MiniAI v1.1
 
 **BY MATEN/T · M/ License v1.0**
 
-Contributions are welcome for independent educational examples, native-speaker review, scientific corrections, compiler-tested code and robust evaluation. Do not submit private data, unauthorized copyrighted corpora, credentials, malware or harmful instructions. State the source, review procedure and license for every dataset contribution. New contributed material must have compatible rights; the custom M/ License cannot magically relicense third-party work. Mark all modifications and add tests. We especially welcome authentic Kurdish Sorani/Kurmanji dialogues and error reports.
+Submit changes that improve reliable PyTorch training, tokenizer quality, dataset diversity, LoRA stability, SafeTensors interoperability or meaningful evaluation. Keep original MATEN/T attribution and follow the project license. Include reproducible tests and describe the GPU/CPU environment and dataset provenance. Never submit private credentials, personal data, plagiarized or unlicensed corpora. Do not describe synthetic row counts as independently reviewed examples or claim unverified model capabilities.

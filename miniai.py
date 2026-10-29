@@ -1,5 +1,5 @@
 # BY MATEN/T | MATEN/T MiniAI v1 | M/ License v1.0
-"""Train a causal 86M decoder model from random weights; chat and local UI.
+"""Train a causal 100M decoder model from random weights; chat and local UI.
 Usage: python miniai.py train|chat|serve|evaluate|prepare|info
 """
 from __future__ import annotations
@@ -161,7 +161,7 @@ def miniature():
 
 def read_checkpoint(path):
     # torch.load may deserialize objects: only load files you trust.
-    return torch.load(path,map_location='cpu',weights_only=False)
+    return torch.load(path,map_location='cpu',weights_only=True)
 
 def evaluate(model,paths,tok,device,limit,bsize,max_batches,split='validation',precision='auto'):
     model.eval(); losses=[]
@@ -214,7 +214,7 @@ def train(args):
         print(f'Resuming at epoch {start_epoch+1}, microbatch index {micro_cursor}, optimizer step {step}',flush=True)
     # Model/optimizer remain in device memory; input corpus is streamed through Python.
     def save(epoch, cursor):
-        obj={'created_by':'MATEN/T','license':'M/ License v1.0','config':asdict(cfg),
+        obj={'created_by':'MATEN/T','license':'M/ License v1.0','training_mode':'supervised_finetuning','config':asdict(cfg),
              'model':model.state_dict(),'optimizer':opt.state_dict(),'scaler':scaler.state_dict(),
              'epoch':epoch,'micro_cursor':cursor,'step':step,'domains':args.domains or FILES,
              'batch_size':args.batch_size,'grad_accum':args.grad_accum,'sequence_length':seq_len,
@@ -348,7 +348,7 @@ def prepare(args):
     print('BY MATEN/T | trained tokenizer from',count,'train-only samples. Model:',TOK)
 
 def parser():
-    p=argparse.ArgumentParser(description='BY MATEN/T | MiniAI v1 86M / 6K context')
+    p=argparse.ArgumentParser(description='BY MATEN/T | MiniAI v1.1 100M / 6K context')
     sub=p.add_subparsers(dest='command',required=True)
     tr=sub.add_parser('train');tr.add_argument('--data',default=str(ROOT/'datasets'));tr.add_argument('--output',default=str(ROOT/'checkpoints'))
     tr.add_argument('--domains',nargs='+',choices=FILES);tr.add_argument('--device',default='auto',choices=['auto','cpu','cuda','mps'])

@@ -348,7 +348,7 @@ def prepare(args):
     print('BY MATEN/T | trained tokenizer from',count,'train-only samples. Model:',TOK)
 
 def parser():
-    p=argparse.ArgumentParser(description='BY MATEN/T | MiniAI v1 86M / 2K context')
+    p=argparse.ArgumentParser(description='BY MATEN/T | MiniAI v1 86M / 6K context')
     sub=p.add_subparsers(dest='command',required=True)
     tr=sub.add_parser('train');tr.add_argument('--data',default=str(ROOT/'datasets'));tr.add_argument('--output',default=str(ROOT/'checkpoints'))
     tr.add_argument('--domains',nargs='+',choices=FILES);tr.add_argument('--device',default='auto',choices=['auto','cpu','cuda','mps'])

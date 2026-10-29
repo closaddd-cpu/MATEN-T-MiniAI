@@ -220,7 +220,15 @@ def build(count=100000, output=ROOT/'datasets', names=None, seed=20261029, force
         if name not in FILES: raise ValueError(f'Unknown domain: {name}')
         dest=output/(name+'.jsonl')
         if dest.exists() and not force:
-            print(f'BY MATEN/T | reuse {dest.name} (use --force to overwrite)')
+            # Never pretend that a partial shard contains the requested row count.
+            with dest.open('rb') as existing:
+                actual=sum(chunk.count(b'\n') for chunk in iter(lambda: existing.read(8 << 20), b''))
+            if actual != count:
+                raise ValueError(
+                    f'{dest.name} has {actual:,} rows, expected {count:,}; '
+                    'use a new --out directory or --force to replace that shard.'
+                )
+            print(f'BY MATEN/T | reuse verified {dest.name} ({count:,} rows)')
             continue
         with dest.open('wb') as fout:
             for i in range(count):

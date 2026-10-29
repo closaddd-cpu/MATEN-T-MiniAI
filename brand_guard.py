@@ -13,6 +13,7 @@ OWNER = 'MATEN/T'
 RULES = {
     'brand_guard.py': ('# BY MATEN/T', 'M/ License v1.0'),
     'miniai.py': ('# BY MATEN/T', 'MATEN/T MiniAI v1'),
+    'train_full.py': ('# BY MATEN/T', 'MATEN/T MiniAI v1'),
     'model.py': ('# BY MATEN/T',),
     'build_datasets.py': ('# BY MATEN/T',),
     'catalog.py': ('# BY MATEN/T',),
